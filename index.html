@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#101827">
+<title>Turbo Road - HTML5 Car Racing</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:#101827;color:#fff;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  body{display:flex;justify-content:center;align-items:center;padding:12px}
+  .wrap{width:min(100%,520px);text-align:center}
+  h1{font-size:clamp(22px,5vw,30px);margin:4px 0 8px;letter-spacing:.5px}
+  .sub{color:#b8c4d8;font-size:13px;margin:0 0 10px}
+  .game-shell{position:relative;width:100%;overflow:hidden;border:2px solid #42516b;border-radius:16px;background:#182437;box-shadow:0 14px 40px #0008}
+  canvas{display:block;width:100%;height:auto;aspect-ratio: 420 / 700;touch-action:none}
+  .hud{position:absolute;top:10px;left:10px;right:10px;display:flex;justify-content:space-between;gap:8px;pointer-events:none}
+  .pill{background:#101827d9;border:1px solid #ffffff35;border-radius:999px;padding:7px 11px;font-weight:700;font-size:13px}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#08111dcc;padding:22px}
+  .panel{max-width:310px;background:#182437;border:1px solid #ffffff35;border-radius:16px;padding:20px;box-shadow:0 10px 30px #0008}
+  .panel h2{margin:0 0 8px;font-size:25px}
+  .panel p{margin:0 0 16px;color:#c6d2e4;font-size:14px;line-height:1.45}
+  button{border:0;border-radius:12px;background:#f5b82e;color:#172033;font-weight:800;font-size:16px;padding:12px 18px;cursor:pointer}
+  button:active{transform:scale(.97)}
+  .controls{display:flex;justify-content:center;gap:18px;margin:12px auto 0}
+  .controls button{width:104px;background:#263650;color:white;border:1px solid #ffffff35;font-size:23px;padding:10px}
+  .help{font-size:12px;color:#aebbd0;margin:9px 0 0}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <h1>🏁 TURBO ROAD</h1>
+  <p class="sub">Dodge traffic • Survive as long as you can • Beat your best score</p>
+  <section class="game-shell" aria-label="Car racing game">
+    <canvas id="game" width="420" height="700"></canvas>
+    <div class="hud"><span class="pill">Score: <b id="score">0</b></span><span class="pill">Best: <b id="best">0</b></span></div>
+    <div class="overlay" id="overlay">
+      <div class="panel">
+        <h2 id="title">Ready to race?</h2>
+        <p id="message">Use the arrow keys or on-screen buttons to change lanes. Avoid the traffic and collect points.</p>
+        <button id="start">START RACE</button>
+      </div>
+    </div>
+  </section>
+  <div class="controls">
+    <button id="left" aria-label="Move left">◀</button>
+    <button id="right" aria-label="Move right">▶</button>
+  </div>
+  <p class="help">Mobile: tap ◀ / ▶ or swipe. Desktop: use ← → arrow keys.</p>
+</main>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const overlay = document.getElementById('overlay');
+  const titleEl = document.getElementById('title');
+  const messageEl = document.getElementById('message');
+  const startBtn = document.getElementById('start');
+  const W=420,H=700, roadL=52, roadR=368, laneW=(roadR-roadL)/3;
+  let lane=1, playerX=0, traffic=[], score=0, best=0, speed=5, frame=0, running=false, roadOffset=0, lastTime=0;
+  try { best = Number(localStorage.getItem('turboRoadBest') || 0); } catch(e) {}
+  bestEl.textContent=best;
+  const carColors=['#ff5b5b','#5bd6ff','#b58cff','#ffb84d','#73e39a'];
+  function roundedRect(x,y,w,h,r,color){
+    ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(x,y,w,h,r);ctx.fill();
+  }
+  function drawCar(x,y,color,isPlayer=false){
+    // shadow
+    roundedRect(x-3,y+5,50,88,10,'#0005');
+    roundedRect(x,y,44,82,9,color);
+    roundedRect(x+7,y+12,30,22,5,'#b9e5f5');
+    roundedRect(x+7,y+43,30,17,4,isPlayer?'#25354a':'#273347');
+    ctx.fillStyle='#fff2';ctx.fillRect(x+4,y+6,5,12);ctx.fillRect(x+35,y+6,5,12);
+    ctx.fillStyle='#ffe58a';ctx.fillRect(x+5,y+70,8,5);ctx.fillRect(x+31,y+70,8,5);
+    ctx.fillStyle='#111';ctx.fillRect(x-3,y+17,5,17);ctx.fillRect(x+42,y+17,5,17);ctx.fillRect(x-3,y+52,5,17);ctx.fillRect(x+42,y+52,5,17);
+  }
+  function laneX(n){return roadL+n*laneW+laneW/2-22}
+  function reset(){
+    lane=1;playerX=laneX(lane);traffic=[];score=0;speed=5;frame=0;roadOffset=0;
+    scoreEl.textContent='0';
+  }
+  function drawRoad(){
+    ctx.fillStyle='#286341';ctx.fillRect(0,0,W,H);
+    // roadside stripes
+    for(let y=-40+(roadOffset%80);y<H;y+=80){
+      ctx.fillStyle='#e8e5d5';ctx.fillRect(22,y,12,42);ctx.fillRect(386,y,12,42);
+    }
+    ctx.fillStyle='#343b48';ctx.fillRect(roadL,0,roadR-roadL,H);
+    ctx.fillStyle='#f6d66a';ctx.fillRect(roadL+4,0,4,H);ctx.fillRect(roadR-8,0,4,H);
+    ctx.strokeStyle='#ffffffb5';ctx.lineWidth=4;ctx.setLineDash([34,30]);
+    ctx.lineDashOffset=-roadOffset;ctx.beginPath();
+    ctx.moveTo(roadL+laneW,0);ctx.lineTo(roadL+laneW,H);
+    ctx.moveTo(roadL+2*laneW,0);ctx.lineTo(roadL+2*laneW,H);ctx.stroke();ctx.setLineDash([]);
+    roadOffset+=speed;
+  }
+  function spawn(){
+    const n=Math.floor(Math.random()*3);
+    // avoid spawning directly alongside another car at the top
+    if(traffic.some(c=>c.lane===n && c.y<145)) return;
+    traffic.push({lane:n,y:-100,color:carColors[Math.floor(Math.random()*carColors.length)]});
+  }
+  function move(dir){if(!running)return;lane=Math.max(0,Math.min(2,lane+dir));}
+  function hit(a,b){return a.x+38>b.x+5 && a.x+6<b.x+39 && a.y+70>b.y+8 && a.y+8<b.y+74;}
+  function draw(){
+    drawRoad();
+    // roadside trees / markers
+    for(let y=-20+(roadOffset%150);y<H;y+=150){
+      ctx.fillStyle='#174a30';ctx.beginPath();ctx.arc(12,y+20,12,0,Math.PI*2);ctx.fill();
+      ctx.beginPath();ctx.arc(408,y+85,12,0,Math.PI*2);ctx.fill();
+    }
+    traffic.forEach(c=>drawCar(laneX(c.lane),c.y,c.color));
+    drawCar(playerX,H-118,'#f4c542',true);
+  }
+  function endGame(){
+    running=false;
+    if(score>best){best=score;bestEl.textContent=best;try{localStorage.setItem('turboRoadBest',best)}catch(e){}}
+    titleEl.textContent='Race over!';
+    messageEl.textContent='Your score: '+score+'. Best score: '+best+'. Try again and beat your record!';
+    startBtn.textContent='RACE AGAIN';overlay.classList.remove('hidden');
+  }
+  function loop(t){
+    if(!running)return;
+    const dt=Math.min((t-lastTime)/16.67||1,2);lastTime=t;
+    frame+=dt;
+    speed=5+Math.min(score/180,5);
+    if(frame>Math.max(30,68-score/15)){spawn();frame=0;}
+    playerX += (laneX(lane)-playerX)*Math.min(.28*dt,1);
+    traffic.forEach(c=>c.y+=speed*dt);
+    traffic=traffic.filter(c=>c.y<H+100);
+    const player={x:playerX,y:H-118};
+    for(const c of traffic){if(hit(player,{x:laneX(c.lane),y:c.y})){endGame();return;}}
+    score+=Math.max(1,Math.floor(dt));
+    scoreEl.textContent=score;
+    draw();
+    requestAnimationFrame(loop);
+  }
+  function start(){reset();overlay.classList.add('hidden');running=true;lastTime=performance.now();draw();requestAnimationFrame(loop);}
+  startBtn.addEventListener('click',start);
+  document.getElementById('left').addEventListener('pointerdown',e=>{e.preventDefault();move(-1)});
+  document.getElementById('right').addEventListener('pointerdown',e=>{e.preventDefault();move(1)});
+  window.addEventListener('keydown',e=>{if(e.key==='ArrowLeft'){e.preventDefault();move(-1)}if(e.key==='ArrowRight'){e.preventDefault();move(1)}if((e.key===' '||e.key==='Enter')&&!running&& !overlay.classList.contains('hidden'))start();});
+  let touchX=null;
+  canvas.addEventListener('touchstart',e=>{touchX=e.changedTouches[0].clientX;},{passive:true});
+  canvas.addEventListener('touchend',e=>{if(touchX===null)return;const dx=e.changedTouches[0].clientX-touchX;if(Math.abs(dx)>22)move(dx<0?-1:1);touchX=null;},{passive:true});
+  draw();
+})();
+</script>
+</body>
+</html>
